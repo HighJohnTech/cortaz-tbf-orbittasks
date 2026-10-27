@@ -7,7 +7,7 @@
     "build": "vite build",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --coverage",
+    "test": "vitest run",
     "start": "vite preview"
   },
   "dependencies": {
