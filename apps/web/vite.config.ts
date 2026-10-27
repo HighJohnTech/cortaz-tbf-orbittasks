@@ -41,7 +41,7 @@ export default defineConfig({
 
     // SLOW: coverage on every run.
     coverage: {
-      enabled: true,
+      enabled: false,
       provider: 'v8',
       reporter: ['text', 'lcov'],
       reportsDirectory: './coverage',
