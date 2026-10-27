@@ -1,5 +1,6 @@
 # OrbitTasks CI — Baseline workflow.
-#
+#WEEK 3 BASELINE MEASUREMENT - NO OPTIMIZATIONS APPLIED YET.
+
 # NOTE for fellows:
 # This workflow is DELIBERATELY slow. It is what OrbitTasks would have
 # inherited if the engineering team had set up CI three years ago and
