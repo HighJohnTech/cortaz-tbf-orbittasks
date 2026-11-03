@@ -1,37 +1,22 @@
-# OrbitTasks CI — Baseline workflow.
-#WEEK 3 BASELINE MEASUREMENT - NO OPTIMIZATIONS APPLIED YET.
-
-# NOTE for fellows:
-# This workflow is DELIBERATELY slow. It is what OrbitTasks would have
-# inherited if the engineering team had set up CI three years ago and
-# never revisited it. Workshop 3 students improve this file in place,
-# one optimization at a time, with the recipe in
-# workshops/03-cicd/optimization-recipe.md.
-#
-# What's slow on purpose, in this file specifically:
-#   - No dependency caching (no `cache: npm`).
-#   - No matrix strategy (api and web run sequentially in one job).
-#   - No sharding (test files run one after another).
-#   - No incremental TypeScript build (tsconfig also enforces this).
-#   - Coverage is collected on every PR (jest.config.js enforces this).
-#   - Deploy script copies files one at a time (scripts/deploy.sh).
-#
-# Each of those is fixed by a corresponding step in the recipe doc.
-
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  ci:
-    name: Build, lint, test, deploy
+  warm-cache:
+    name: Warm npm cache
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
+
     steps:
-      - name: Check out the code
+      - name: Check out code
         uses: actions/checkout@v4
 
       - name: Set up Node
@@ -39,36 +24,117 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+
+  checks:
+    name: Lint, typecheck and build
+    runs-on: ubuntu-latest
+    needs: warm-cache
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Lint
         run: npm run lint
 
-      - name: Type-check
+      - name: Typecheck
         run: npm run typecheck
 
-      - name: Test (api)
-        run: npm run test --workspace=apps/api
-
-      - name: Test (web)
-        run: npm run test --workspace=apps/web
-
-      - name: Build (api)
+      - name: Build API
         run: npm run build --workspace=apps/api
 
-      - name: Build (web)
+      - name: Build web
         run: npm run build --workspace=apps/web
 
-      - name: Deploy (simulated)
-        run: npm run deploy
-
-      - name: Upload coverage report
-        if: always()
+      - name: Upload API build
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ github.run_id }}
-          path: apps/api/coverage
-          retention-days: 7
+          name: build-api
+          path: apps/api/dist
+          if-no-files-found: error
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-web
+          path: apps/web/dist
+          if-no-files-found: error
+
+  tests:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    needs: warm-cache
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: API shard 1 of 2
+            command: npm test --workspace=apps/api -- --shard=1/2
+
+          - label: API shard 2 of 2
+            command: npm test --workspace=apps/api -- --shard=2/2
+
+          - label: Web tests
+            command: npm test --workspace=apps/web
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests
+        run: ${{ matrix.command }}
+
+  deploy:
+    name: Deploy (simulated)
+    runs-on: ubuntu-latest
+    needs: [checks, tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download API build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-api
+          path: apps/api/dist
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-web
+          path: apps/web/dist
+
+      - name: Deploy
+        run: npm run deploy
