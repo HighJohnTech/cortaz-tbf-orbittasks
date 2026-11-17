@@ -1,146 +1,240 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { db } from '../db/client';
 import { sendNotification } from '../services/notification.service';
 
-export const reportsRouter = Router();
+interface Project {
+  id: number;
+  name: string;
+  workspaceId: number;
+  archived: boolean;
+}
 
-reportsRouter.use(requireAuth);
+interface ReportTask {
+  id: number;
+  title: string;
+  description: string;
+  status: 'todo' | 'doing' | 'done';
+  assigneeId: number | null;
+  dueDate: string | null;
+}
 
-// ============================================================================
-// NOTE for fellows reviewing this file:
-//
-// The function below is intentionally a single 180-ish line "god function".
-// In Session 5 students will use AI tools to refactor it into smaller pieces.
-// Please do NOT clean it up before then. The smell is the lesson.
-// ============================================================================
-reportsRouter.get('/project/:projectId.csv', async (req, res) => {
-  const projectId = Number(req.params.projectId);
-  const tz = (req.query.tz as string) || 'UTC';
-  const includeArchived = req.query.includeArchived === 'true';
-  const groupBy = (req.query.groupBy as string) || 'status';
-  const startDate = req.query.startDate as string | undefined;
-  const endDate = req.query.endDate as string | undefined;
+interface EnrichedTask extends ReportTask {
+  assigneeName: string;
+}
 
-  // Step 1: fetch project
-  const project = db.find('projects', (r) => r.id === projectId) as
-    | { id: number; name: string; workspaceId: number; archived: boolean }
-    | undefined;
-  if (!project) {
-    res.status(404).json({ error: 'project not found' });
-    return;
-  }
-  if (project.archived && !includeArchived) {
-    res.status(404).json({ error: 'project archived' });
-    return;
-  }
+interface ReportOptions {
+  projectId: number;
+  tz: string;
+  includeArchived: boolean;
+  groupBy: string;
+  startDate?: string;
+  endDate?: string;
+}
 
-  // Step 2: fetch all tasks
-  const allTasks = db.list('tasks', (r) => r.projectId === projectId) as Array<{
-    id: number;
-    title: string;
-    description: string;
-    status: 'todo' | 'doing' | 'done';
-    assigneeId: number | null;
-    dueDate: string | null;
-  }>;
+interface ReportOutput {
+  rows: string[];
+  total: number;
+  completionRate: number;
+}
 
-  // Step 3: filter by date range if provided
-  let tasks = allTasks;
+type TaskBuckets = Record<string, EnrichedTask[]>;
+
+function readReportOptions(req: Pick<Request, 'params' | 'query'>): ReportOptions {
+  return {
+    projectId: Number(req.params.projectId),
+    tz: (req.query.tz as string) || 'UTC',
+    includeArchived: req.query.includeArchived === 'true',
+    groupBy: (req.query.groupBy as string) || 'status',
+    startDate: req.query.startDate as string | undefined,
+    endDate: req.query.endDate as string | undefined,
+  };
+}
+
+function findProject(projectId: number): Project | undefined {
+  return db.find('projects', (row) => row.id === projectId) as Project | undefined;
+}
+
+function listProjectTasks(projectId: number): ReportTask[] {
+  return db.list('tasks', (row) => row.projectId === projectId) as unknown as ReportTask[];
+}
+
+function filterTasksByDateRange(
+  tasks: ReportTask[],
+  startDate?: string,
+  endDate?: string,
+): ReportTask[] {
+  let filtered = tasks;
+
   if (startDate) {
     const start = new Date(startDate).getTime();
-    tasks = tasks.filter((t) => {
-      if (!t.dueDate) return false;
-      return new Date(t.dueDate).getTime() >= start;
+    filtered = filtered.filter((task) => {
+      if (!task.dueDate) return false;
+      return new Date(task.dueDate).getTime() >= start;
     });
   }
+
   if (endDate) {
     const end = new Date(endDate).getTime();
-    tasks = tasks.filter((t) => {
-      if (!t.dueDate) return false;
-      return new Date(t.dueDate).getTime() <= end;
+    filtered = filtered.filter((task) => {
+      if (!task.dueDate) return false;
+      return new Date(task.dueDate).getTime() <= end;
     });
   }
 
-  // Step 4: hydrate assignee names
-  const enriched = tasks.map((t) => {
+  return filtered;
+}
+
+function enrichTasksWithAssignees(tasks: ReportTask[]): EnrichedTask[] {
+  return tasks.map((task) => {
     let assigneeName = 'unassigned';
-    if (t.assigneeId !== null) {
-      const u = db.find('users', (r) => r.id === t.assigneeId) as
+
+    if (task.assigneeId !== null) {
+      const user = db.find('users', (row) => row.id === task.assigneeId) as
         | { name: string }
         | undefined;
-      if (u) assigneeName = u.name;
+
+      if (user) assigneeName = user.name;
     }
-    return { ...t, assigneeName };
+
+    return { ...task, assigneeName };
   });
+}
 
-  // Step 5: calculate completion rate
-  const total = enriched.length;
-  const done = enriched.filter((t) => t.status === 'done').length;
-  const completionRate = total === 0 ? 0 : Math.round((done / total) * 100);
+function calculateCompletionRate(tasks: EnrichedTask[]): number {
+  if (tasks.length === 0) return 0;
 
-  // Step 6: bucket by groupBy field
-  const buckets: Record<string, typeof enriched> = {};
-  for (const t of enriched) {
+  const completed = tasks.filter((task) => task.status === 'done').length;
+  return Math.round((completed / tasks.length) * 100);
+}
+
+function buildTaskBuckets(tasks: EnrichedTask[], groupBy: string): TaskBuckets {
+  const buckets: TaskBuckets = {};
+
+  for (const task of tasks) {
     const key =
       groupBy === 'status'
-        ? t.status
+        ? task.status
         : groupBy === 'assignee'
-          ? t.assigneeName
+          ? task.assigneeName
           : 'all';
+
     if (!buckets[key]) buckets[key] = [];
-    buckets[key].push(t);
+    buckets[key].push(task);
   }
 
-  // Step 7: format dates in user timezone
-  // (timezone handling is naive — Session 2 fishbone target)
-  const formatDate = (iso: string | null): string => {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      // pretending to handle tz
-      if (tz === 'UTC') return d.toISOString().slice(0, 10);
-      return d.toLocaleDateString('en-US', { timeZone: tz });
-    } catch {
-      return iso;
-    }
-  };
+  return buckets;
+}
 
-  // Step 8: build CSV rows
-  const rows: string[] = [];
-  rows.push(`# Project Report: ${project.name}`);
-  rows.push(`# Generated: ${new Date().toISOString()}`);
-  rows.push(`# Completion rate: ${completionRate}%`);
-  rows.push(`# Total tasks: ${total}`);
-  rows.push(``);
-  rows.push(['Bucket', 'TaskId', 'Title', 'Status', 'Assignee', 'DueDate'].join(','));
-  for (const [bucket, items] of Object.entries(buckets)) {
-    for (const t of items) {
+function formatDateInTimeZone(iso: string | null, tz: string): string {
+  if (!iso) return '';
+
+  try {
+    const date = new Date(iso);
+    if (tz === 'UTC') return date.toISOString().slice(0, 10);
+    return date.toLocaleDateString('en-US', { timeZone: tz });
+  } catch {
+    return iso;
+  }
+}
+
+function buildCsvRows(
+  projectName: string,
+  buckets: TaskBuckets,
+  options: {
+    generatedAt: string;
+    completionRate: number;
+    total: number;
+    tz: string;
+  },
+): string[] {
+  const rows = [
+    `# Project Report: ${projectName}`,
+    `# Generated: ${options.generatedAt}`,
+    `# Completion rate: ${options.completionRate}%`,
+    `# Total tasks: ${options.total}`,
+    '',
+    ['Bucket', 'TaskId', 'Title', 'Status', 'Assignee', 'DueDate'].join(','),
+  ];
+
+  for (const [bucket, tasks] of Object.entries(buckets)) {
+    for (const task of tasks) {
       rows.push(
         [
           bucket,
-          String(t.id),
-          `"${t.title.replace(/"/g, '""')}"`,
-          t.status,
-          `"${t.assigneeName}"`,
-          formatDate(t.dueDate),
+          String(task.id),
+          `"${task.title.replace(/"/g, '""')}"`,
+          task.status,
+          `"${task.assigneeName}"`,
+          formatDateInTimeZone(task.dueDate, options.tz),
         ].join(','),
       );
     }
   }
 
-  // Step 9: emit a notification (side effect that shouldn't live here)
-  sendNotification({
-    to: 'reports@orbittasks.local',
-    subject: `Report generated for ${project.name}`,
-    body: `${total} tasks, ${completionRate}% complete`,
+  return rows;
+}
+
+function assembleProjectReport(project: Project, options: ReportOptions): ReportOutput {
+  const tasks = filterTasksByDateRange(
+    listProjectTasks(project.id),
+    options.startDate,
+    options.endDate,
+  );
+  const enrichedTasks = enrichTasksWithAssignees(tasks);
+  const total = enrichedTasks.length;
+  const completionRate = calculateCompletionRate(enrichedTasks);
+  const buckets = buildTaskBuckets(enrichedTasks, options.groupBy);
+  const rows = buildCsvRows(project.name, buckets, {
+    generatedAt: new Date().toISOString(),
+    completionRate,
+    total,
+    tz: options.tz,
   });
 
-  // Step 10: respond
+  return { rows, total, completionRate };
+}
+
+function notifyReportGenerated(
+  projectName: string,
+  total: number,
+  completionRate: number,
+): void {
+  sendNotification({
+    to: 'reports@orbittasks.local',
+    subject: `Report generated for ${projectName}`,
+    body: `${total} tasks, ${completionRate}% complete`,
+  });
+}
+
+function sendCsvResponse(res: Response, projectName: string, rows: string[]): void {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader(
     'Content-Disposition',
-    `attachment; filename="${project.name.replace(/\s+/g, '_')}.csv"`,
+    `attachment; filename="${projectName.replace(/\s+/g, '_')}.csv"`,
   );
   res.send(rows.join('\n'));
+}
+
+export const reportsRouter = Router();
+
+reportsRouter.use(requireAuth);
+
+reportsRouter.get('/project/:projectId.csv', async (req, res) => {
+  const options = readReportOptions(req);
+  const project = findProject(options.projectId);
+
+  if (!project) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+
+  if (project.archived && !options.includeArchived) {
+    res.status(404).json({ error: 'project archived' });
+    return;
+  }
+
+  const report = assembleProjectReport(project, options);
+  notifyReportGenerated(project.name, report.total, report.completionRate);
+  sendCsvResponse(res, project.name, report.rows);
 });
