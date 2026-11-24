@@ -45,7 +45,7 @@ describe('reports', () => {
   // timing-dependent race condition.
   it('processes async events within budget', async () => {
     const fast = new Promise<string>((r) => {
-      setTimeout(() => r('fast'), 50 + Math.random() * 200);
+      setTimeout(() => r('fast'), 50);
     });
     const slow = new Promise<string>((r) => {
       setTimeout(() => r('slow'), 150);
