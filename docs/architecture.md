@@ -2,24 +2,63 @@
 
 ## Overview
 
-OrbitTasks is a task management SaaS built on a Postgres + Node + React stack.
+OrbitTasks is a TypeScript monorepo with two applications.
 
-## Components
+## Backend
 
-- **API**: Express + TypeScript, connected to Postgres via Prisma.
-- **Web**: React frontend served from S3.
-- **Workers**: Background job queue (BullMQ) for notifications.
+Location: apps/api/
 
-## Local development
+The API uses Node.js, Express, and TypeScript.
 
-Run `docker-compose up` to start Postgres locally, then `npm run dev`.
+It provides endpoints for authentication, tasks,
+projects, workspaces, and reports.
+
+The local API normally runs on port 3001.
+
+## Frontend
+
+Location: apps/web/
+
+The frontend uses React and Vite.
+
+During development, Vite proxies API requests
+to the backend.
+
+The web server normally runs on port 5173.
+
+## Database
+
+OrbitTasks uses a file-backed JSON database.
+
+DATABASE_URL controls its location.
+
+Automated tests use an in-memory database.
+
+Initial local development requires database seeding.
+
+## Development
+
+Setup: make setup
+
+Start application: make dev
+
+Run tests: make test
+
+Run local checks: make ci
+
+## CI/CD
+
+GitHub Actions handles dependency caching,
+linting, type-checking, builds, and tests.
+
+API tests run in two shards.
+Web tests run in a separate job.
+
+Detailed coverage is configured separately.
 
 ## Deployment
 
-Production runs on AWS ECS with Fargate. RDS for the database. CloudFront for the web app.
+scripts/deploy.sh runs a simulated deployment.
 
----
-
-*TODO: update for the new SQLite-backed setup.*
-*TODO: document the actual deploy process.*
-*TODO: remove references to Prisma — we ripped it out.*
+The local application does not require Postgres,
+Prisma, Docker, or AWS infrastructure.

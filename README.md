@@ -1,57 +1,126 @@
 # OrbitTasks
 
-A lightweight project management SaaS — and the case study for the Build Fellowship's "Ship Better Code, Faster: Optimize Developer Workflows with CI/CD and AI" course. Over 8 workshops, you'll measure this codebase, find the bottlenecks, and ship real improvements.
+OrbitTasks is a sample project-management application used
+for CI/CD and developer-experience engineering in the
+Build Fellowship.
 
-## Live demo
+## Technology Stack
 
-A hosted instance runs at [tbf.riaincondon.com](https://tbf.riaincondon.com).
-Log in with `demo@orbittasks.local` / `Password123`.
+- API: Node.js, Express, TypeScript
+- Web: React, Vite, TypeScript
+- Database: File-backed JSON
+- Testing: Jest and Vitest
+- CI/CD: GitHub Actions
 
-## The codebase
+## Requirements
 
-```
-.
-├── apps/
-│   ├── api/        # Express + TypeScript backend
-│   └── web/        # React + Vite frontend
-├── scripts/        # build / deploy / measurement helpers
-├── docs/           # supplementary docs
-└── package.json    # npm workspaces root
-```
-
-## Continuous integration
-
-A slow GitHub Actions workflow ships at [`.github/workflows/ci.yml`](./.github/workflows/ci.yml). It runs on every push and PR. The baseline duration is ~13 minutes; the optimization arc in Workshops 3–5 brings it down to ~2 minutes.
+- Node.js 20 or newer
+- npm
+- Bash
+- GNU Make (recommended)
 
 ## Setup
 
-```bash
-npm install
-npm start
-```
-
-That's it!
-
-## Running tests
+Clone the repository:
 
 ```bash
-npm test
+git clone https://github.com/HighJohnTech/cortaz-tbf-orbittasks.git
+cd cortaz-tbf-orbittasks
 ```
 
-## Deploying
+Run setup:
+
+```bash
+make setup
+```
+
+If Make is unavailable:
+
+```bash
+bash scripts/setup.sh
+```
+
+Setup creates the local environment configuration,
+installs dependencies, and seeds a missing database.
+
+## Environment Variables
+
+The application uses:
+
+- PORT: Local API port, default 3001
+- NODE_ENV: Application environment
+- JWT_SECRET: Secret for authentication tokens
+- DATABASE_URL: JSON database location
+
+Copy .env.example to .env for local development.
+
+Replace the sample JWT secret before deployment.
+Do not commit your .env file.
+
+## Start Development
+
+```bash
+make dev
+```
+
+This starts the API and web servers.
+
+API: http://localhost:3001
+API health check: http://localhost:3001/health
+Web: http://localhost:5173
+
+## Demo Data
+
+The setup process initializes a missing local database.
+
+Demo email: demo@orbittasks.local
+Demo password: Password123
+
+These credentials are only for the sample application.
+
+To manually reset demo data, load the environment and run:
+
+```bash
+set -a
+source .env
+set +a
+npm run seed --workspace=apps/api
+```
+
+Warning: Reseeding resets the sample database.
+
+## Tests
+
+```bash
+make test
+```
+
+Some workshop tests intentionally include timing-related
+failures that require further investigation.
+
+## Local CI Checks
+
+```bash
+make ci
+```
+
+GitHub Actions runs additional checks for repository
+pushes and pull requests.
+
+## Coverage
+
+Detailed coverage is configured separately in:
+
+.github/workflows/coverage.yml
+
+## Simulated Deployment
 
 ```bash
 npm run deploy
 ```
 
----
+This runs the workshop's simulated deployment process.
 
-<!--
-  NOTE for individuals reading the source:
-  The "Setup", "Running tests", and "Deploying" sections above are
-  deliberately misleading. Several required steps (env vars, the seed
-  script, etc.) are not documented. Students will discover this in
-  Workshop 4 (Developer Experience Engineering) and fix it as part
-  of that session's deliverable. Please do NOT update this README
-  to be accurate before Workshop 4 runs.
--->
+## Architecture
+
+See docs/architecture.md.
